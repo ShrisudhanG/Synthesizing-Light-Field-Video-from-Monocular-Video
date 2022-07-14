@@ -35,13 +35,12 @@ class Tester():
 
         self.args = args
         #################################### Setup GPU device ######################################### 
-        self.device = torch.device(f'cuda:{args.gpu}' if torch.cuda.is_available() else 'cpu')
-        self.device1 = torch.device(f'cuda:{args.gpu_sub}' if torch.cuda.is_available() else 'cpu')
+        self.device = torch.device(f'cuda:{args.gpu_1}' if torch.cuda.is_available() else 'cpu')
+        self.device1 = torch.device(f'cuda:{args.gpu_2}' if torch.cuda.is_available() else 'cpu')
         print('Device: {}, {}'.format(self.device, self.device1))
         
         #################################### Refinement Model #########################################
         self.ref_model = models.RefinementBlock(patch_size=1)
-        #path = os.path.join(args.root, args.exp_name, 'checkpoints', args.checkpoint)
         checkpoint = torch.load('weights/refine_net.pt', map_location='cpu')['model']
         self.ref_model.load_state_dict(checkpoint)
         self.ref_model = self.ref_model.to(self.device)
@@ -50,15 +49,14 @@ class Tester():
         # number of predictions for TD
         td_chans = self.args.rank*self.args.num_layers*3
         self.lf_model = models.UnetLF.build(td_chans=td_chans, layers=args.num_layers, rank=args.rank)
-        if args.depth_input:
-            self.lf_model.encoder.original_model.conv_stem = models.Conv2dSame(10, 48, kernel_size=(3, 3), 
-                                                                               stride=(2, 2), bias=False)
+        self.lf_model.encoder.original_model.conv_stem = models.Conv2dSame(10, 48, kernel_size=(3, 3), 
+                                                                           stride=(2, 2), bias=False)
         checkpoint = torch.load('weights/recons_net.pt', map_location='cpu')['model']
         self.lf_model.load_state_dict(checkpoint)
         self.lf_model = self.lf_model.to(self.device1)
 
         ##################################### Tensor Display ##########################################
-        self.val_td_model = models.multilayer(height=args.val_height, width=args.val_width, 
+        self.val_td_model = models.multilayer(height=args.height, width=args.width, 
                                               args=self.args, device=self.device1)
         self.md = args.max_displacement
         self.zp = args.zero_plane
@@ -85,7 +83,7 @@ class Tester():
             N, V, C, H, W = img1.shape
             img1 = img1.reshape(N*V, C, H, W).cpu()
             img2 = img2.reshape(N*V, C, H, W).cpu()
-            loss = 1-0.1*ssim(img1, img2)
+            loss = 1 - 0.1*ssim(img1, img2)
             return loss
 
 
@@ -136,10 +134,7 @@ class Tester():
                         gt_lfs.append(gt_lf)
                         dpt_disp = batch[id]['disp'].to(self.device)
                         disp = -1 * (dpt_disp - zp) * md
-                        if self.args.depth_input:
-                            img = torch.cat([prev_img, curr_img, next_img, disp], dim=1)
-                        else:
-                            img = torch.cat([prev_img, curr_img, next_img], dim=1)
+                        img = torch.cat([prev_img, curr_img, next_img, disp], dim=1)
 
                         img = img.to(self.device1)
                         decomposition, depth_planes, state = self.lf_model(img, prev_state)
@@ -155,12 +150,7 @@ class Tester():
                         ref_lf = mask*corr_lf + (1-mask)*pred_lf
                         ref_lf = ref_lf.clip(0, 1)
                         ref_lfs.append(ref_lf.cpu())
-                        
-                        diff_lf = torch.abs(ref_lf - pred_lf)
-                        diff_lfs.append(3*diff_lf.cpu())
 
-                        maxi, mini = mask.max(), mask.min()
-                        #mask = (mask - mini)/(maxi - mini)
                         mask = mask.repeat(1, 1, 3, 1, 1)
                         masks.append(3*mask.cpu())
                         
@@ -183,8 +173,7 @@ class Tester():
                         gt_imgs = utils.lftensor2lfnp(gt_lfs)
                         pred_lf_imgs = utils.lftensor2lfnp(pred_lfs)
                         ref_lf_imgs = utils.lftensor2lfnp(ref_lfs)
-                        diff_lf_imgs = utils.lftensor2lfnp(diff_lfs)
-                        mask_imgs = utils.lftensor2lfnp(masks)
+                        #mask_imgs = utils.lftensor2lfnp(masks)
                         
                         for img, path in zip(inp_imgs, img_paths):
                             imageio.imwrite(path, np.uint8(img*255))
@@ -200,10 +189,8 @@ class Tester():
                             utils.save_video_from_lf(lf, path)
                             if self.save_numpy:
                                 np.save(path.replace('mp4', 'npy'), lf)
-                        for lf, path in zip(diff_lf_imgs, pred_lf_paths):
-                            utils.save_video_from_lf(lf, path.replace('pred', 'diff'))
-                        for lf, path in zip(mask_imgs, pred_lf_paths):
-                            utils.save_video_from_lf(lf, path.replace('pred_lf', 'mask'))
+                        #for lf, path in zip(mask_imgs, pred_lf_paths):
+                        #    utils.save_video_from_lf(lf, path.replace('pred_lf', 'mask'))
                         
                         prev_state = state
                         
@@ -259,8 +246,8 @@ if __name__ == '__main__':
     parser.add_argument('--results', default='results', type=str, help='directory to save results')
     parser.add_argument('-sn', '--save_numpy', default=False, action='store_true', help='whether to save np files')
     
-    parser.add_argument('--gpu', default=0, type=int, help='which gpu to use')
-    parser.add_argument('--gpu_sub', default=0, type=int, help='which gpu to use')
+    parser.add_argument('--gpu_1', default=0, type=int, help='which gpu to use')
+    parser.add_argument('--gpu_2', default=0, type=int, help='which gpu to use')
     parser.add_argument('--workers', default=1, type=int, help='number of workers for data loading')
 
     ######################################## Dataset parameters #######################################
@@ -275,11 +262,8 @@ if __name__ == '__main__':
                         help='whether to train with crops or resized images')
 
     ############################################# I/0 parameters ######################################
-    parser.add_argument('-th', '--train_height', type=int, help='input height', default=180)
-    parser.add_argument('-tw', '--train_width', type=int, help='input width', default=270)
-    parser.add_argument('-vh', '--val_height', type=int, help='input height', default=352)
-    parser.add_argument('-vw', '--val_width', type=int, help='input width', default=528)
-    parser.add_argument('--depth_input', default=True, action='store_true', help='whether to use depth as input to network')
+    parser.add_argument('-h', '--height', type=int, help='input height', default=352)
+    parser.add_argument('-w', '--width', type=int, help='input width', default=528)
     parser.add_argument('-md', '--max_displacement', default=1.2, type=float)
     parser.add_argument('-zp', '--zero_plane', default=0.3, type=float)
     parser.add_argument('-cc', '--color_corr', default=True, action='store_true')

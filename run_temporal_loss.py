@@ -35,14 +35,13 @@ class Tester():
 
         self.args = args
         #################################### Setup GPU device ######################################### 
-        self.device = torch.device(f'cuda:{args.gpu}' if torch.cuda.is_available() else 'cpu')
-        self.device1 = torch.device(f'cuda:{args.gpu_sub}' if torch.cuda.is_available() else 'cpu')
+        self.device = torch.device(f'cuda:{args.gpu_1}' if torch.cuda.is_available() else 'cpu')
+        self.device1 = torch.device(f'cuda:{args.gpu_2}' if torch.cuda.is_available() else 'cpu')
         print('Device: {}, {}'.format(self.device, self.device1))
         
         #################################### Refinement Model #########################################
         self.ref_model = models.RefinementBlock(patch_size=1)
-        #path = os.path.join(args.root, args.exp_name, 'checkpoints', args.checkpoint)
-        checkpoint = torch.load('weights/ref-adpt-tamulf+hybrid-lb.pt', map_location='cpu')['model']
+        checkpoint = torch.load('weights/refine_net.pt', map_location='cpu')['model']
         self.ref_model.load_state_dict(checkpoint)
         self.ref_model = self.ref_model.to(self.device)
 
@@ -50,16 +49,14 @@ class Tester():
         # number of predictions for TD
         td_chans = self.args.rank*self.args.num_layers*3
         self.lf_model = models.UnetLF.build(td_chans=td_chans, layers=args.num_layers, rank=args.rank)
-        if args.depth_input:
-            self.lf_model.encoder.original_model.conv_stem = models.Conv2dSame(10, 48, kernel_size=(3, 3), 
-                                                                               stride=(2, 2), bias=False)
-        path = f'weights/{args.checkpoint}'
-        checkpoint = torch.load(path, map_location='cpu')['model']
+        self.lf_model.encoder.original_model.conv_stem = models.Conv2dSame(10, 48, kernel_size=(3, 3), 
+                                                                           stride=(2, 2), bias=False)
+        checkpoint = torch.load('weights/recons_net.pt', map_location='cpu')['model']
         self.lf_model.load_state_dict(checkpoint)
         self.lf_model = self.lf_model.to(self.device1)
 
         ##################################### Tensor Display ##########################################
-        self.val_td_model = models.multilayer(height=args.val_height, width=args.val_width, 
+        self.val_td_model = models.multilayer(height=args.height, width=args.width, 
                                               args=self.args, device=self.device1)
         self.md = args.max_displacement
         self.zp = args.zero_plane
@@ -68,10 +65,7 @@ class Tester():
         self.temporal_loss = TemporalConsistency(args, self.device)
         
         ####################################### Save test results ##############################################
-        if 'no_occ' in path:
-            self.save_path = os.path.join(args.results, args.dataset+'-no_occ-{:.2f}, {:.2f}'.format(self.md, self.zp))
-        else:
-            self.save_path = os.path.join(args.results, args.dataset+'-{:.2f}, {:.2f}'.format(self.md, self.zp))
+        self.save_path = os.path.join(args.results, args.dataset+'-{:.2f}, {:.2f}'.format(self.md, self.zp))
         os.makedirs(self.save_path, exist_ok=True)
         self.save_numpy = args.save_numpy
 
@@ -89,7 +83,7 @@ class Tester():
         # some globals
         iters = len(test_loader)
         temp_loss_avg = RunningAverage()
-        f = open(f'{self.args.dataset}({md:.1f},{zp:.1f})-temp_loss_ref.txt', 'w')
+        f = open(f'{self.save_path}/{self.args.dataset}({md:.1f},{zp:.1f})-temp_loss_ref.txt', 'w')
 
         ################################# Validation loop #############################################
         with torch.no_grad():
@@ -121,11 +115,8 @@ class Tester():
 
                     dpt_disp = batch[id]['disp'].to(self.device1)
                     disp = -1 * (dpt_disp - zp) * md
-                    if self.args.depth_input:
-                        img = torch.cat([prev_img, curr_img, next_img, disp], dim=1)
-                    else:
-                        img = torch.cat([prev_img, curr_img, next_img], dim=1)
-
+                    img = torch.cat([prev_img, curr_img, next_img, disp], dim=1)
+                
                     img = img.to(self.device1)
                     decomposition, depth_planes, state = self.lf_model(img, prev_state)
                     pred_lf = self.val_td_model(decomposition, depth_planes)
@@ -176,12 +167,11 @@ if __name__ == '__main__':
     parser.convert_arg_line_to_args = convert_arg_line_to_args
 
     ####################################### Experiment arguments ######################################
-    parser.add_argument('-ckpt', '--checkpoint', default='adpt-lb.pt', type=str, help='path to checkpoint')
-    parser.add_argument('--results', default='results-adpt', type=str, help='directory to save results')
+    parser.add_argument('--results', default='results', type=str, help='directory to save results')
     parser.add_argument('-sn', '--save_numpy', default=False, action='store_true', help='whether to save np files')
     
-    parser.add_argument('--gpu', default=1, type=int, help='which gpu to use')
-    parser.add_argument('--gpu_sub', default=0, type=int, help='which gpu to use')
+    parser.add_argument('--gpu_1', default=1, type=int, help='which gpu to use')
+    parser.add_argument('--gpu_2', default=0, type=int, help='which gpu to use')
     parser.add_argument('--workers', default=1, type=int, help='number of workers for data loading')
 
     ######################################## Dataset parameters #######################################
@@ -192,41 +182,15 @@ if __name__ == '__main__':
     parser.add_argument('--disp_path', default='/media/data/prasan/datasets/LF_video_datasets/DPT-depth', type=str, 
                         help='path to the groundtruth data for online evaluation')
 
-    #parser.add_argument('--filenames_file_eval', default='test_inputs/Kalantari/test_files.txt',
-    #                    type=str, help='path to the filenames text file for online evaluation')
-                        
     parser.add_argument('-ty', '--type', type=str, default='resize', 
                         help='whether to train with crops or resized images')
 
     ############################################# I/0 parameters ######################################
-    parser.add_argument('-th', '--train_height', type=int, help='input height', default=180)
-    parser.add_argument('-tw', '--train_width', type=int, help='input width', default=270)
-    parser.add_argument('-vh', '--val_height', type=int, help='input height', default=352)
-    parser.add_argument('-vw', '--val_width', type=int, help='input width', default=528)
-    parser.add_argument('--depth_input', default=True, action='store_true', help='whether to use depth as input to network')
+    parser.add_argument('-h', '--height', type=int, help='input height', default=352)
+    parser.add_argument('-w', '--width', type=int, help='input width', default=528)
     parser.add_argument('-md', '--max_displacement', default=1.2, type=float)
     parser.add_argument('-zp', '--zero_plane', default=0.3, type=float)
     parser.add_argument('-cc', '--color_corr', default=True, action='store_true')
-
-    ####################################### Loss parameters ###########################################
-    parser.add_argument('-wgt', '--edge_weight_mask', default=False, action='store_true', 
-                        help='whether to use edge weights mask')
-    parser.add_argument('-ss', '--ssim', default=False, action='store_true',
-                        help='whether to use SSIM loss')
-    parser.add_argument('-ws', '--w_ssim', default=0.5, type=float, help='weight value for SSIM loss')
-    parser.add_argument('-lc', '--lf_consistency', default=1.0, type=float, 
-                        help='weight value for geometric consistency')
-    parser.add_argument('-tc', '--temp_consistency', default=0.2, type=float, 
-                        help='weight value for temporal consistency')
-    parser.add_argument('-oh', '--occ_handling', default=0.2, type=float, 
-                        help='weight value for occlusion handling')
-    parser.add_argument('-rt', '--ratio', default=0.2, type=float, 
-                        help='ratio of angular view used for occlusion loss')
-    parser.add_argument('-lt', '--loss_type', default='min', type=str, 
-                        help='min/mean for occlusion loss')
-    parser.add_argument('-sm', '--smoothness', default=0.1, type=float, 
-                        help='weight value for light field geometric consistency')
-    parser.add_argument('-wc', '--w_chamfer', default=2, type=float, help='weight value for chamfer loss')
 
     ####################################### RAFT parameters ###########################################
     parser.add_argument('--small', action='store_true', help='use small model')
