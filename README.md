@@ -1,6 +1,6 @@
 # Synthesizing-Light-Field-Video-from-Monocular-Video
 
-Download the pretrained weights to *weights/* directory.
+Download the pretrained weights to *weights/* directory.  
 Link to download weights for Reconstruction Network: [link](https://drive.google.com/file/d/1S8ZPAMski9fEJFAYbuypNZeX4M4lW-1z/view?usp=sharing)  
 Link to download weights for Refinement Network: [link](https://drive.google.com/file/d/10odwvOXCPS53VLIBSGT7b5rypQ1kXuwx/view?usp=sharing)  
 Link to download weights for RAFT Optical Flow Network(for temporal loss calculation): [link](https://drive.google.com/file/d/1JhDcpDlKW5F-YFfOAVNZfACjSK9abBo_/view?usp=sharing)
